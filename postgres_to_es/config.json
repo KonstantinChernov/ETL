@@ -1,0 +1,17 @@
+{
+  "film_work_pg": {
+    "dsn": {
+      "host": "movies-db",
+      "port": 5432
+    },
+    "fetch_delay": 0.1,
+    "limit": 100
+  },
+  "film_work_es": {
+    "dsn": {
+      "host": "elasticsearch",
+      "port": 9200
+    }
+  },
+  "state_file_path": "./state_storage.json"
+}
