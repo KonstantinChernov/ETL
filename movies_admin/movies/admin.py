@@ -6,8 +6,8 @@ from .models import FilmWork, FilmWorkPerson, FilmWorkGenre, Genre, Person
 class FilmWorkPersonInline(admin.TabularInline):
     model = FilmWorkPerson
     extra = 0
-    fields = ("film_work", "person", "role")
     raw_id_fields = ("film_work", "person")
+    readonly_fields = raw_id_fields
 
 
 class FilmWorkGenreInline(admin.TabularInline):
@@ -15,6 +15,7 @@ class FilmWorkGenreInline(admin.TabularInline):
     extra = 0
     fields = ("genre",)
     raw_id_fields = ("film_work", "genre")
+    readonly_fields = raw_id_fields
 
 
 class GenreFilmWorkListFilter(admin.SimpleListFilter):
@@ -44,11 +45,6 @@ class FilmWorkAdmin(admin.ModelAdmin):
         FilmWorkPersonInline, FilmWorkGenreInline
     )
 
-    def save_related(self, request, form, formsets, change):
-        pass
-        # for formset in formsets:
-        #     self.save_formset(request, form, formset, change=change)
-
 
 @admin.register(Genre)
 class GenreAdmin(admin.ModelAdmin):
@@ -63,7 +59,6 @@ class GenreAdmin(admin.ModelAdmin):
 class PersonAdmin(admin.ModelAdmin):
     list_display = ('full_name', 'birth_date')
     search_fields = ('full_name', 'birth_date', 'id')
-    fields = ('full_name', 'birth_date', 'id')
 
     inlines = (
         FilmWorkPersonInline,

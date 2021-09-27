@@ -14,7 +14,7 @@ class TimeStampedMixin(models.Model):
 
 
 class Genre(TimeStampedMixin):
-    id = models.UUIDField(primary_key=True, unique=True, default=uuid.uuid4)
+    id = models.UUIDField(primary_key=True, unique=True, default=uuid.uuid4, editable=False)
     name = models.CharField(_("name"), max_length=255)
     description = models.TextField(_("description"), blank=True, null=True)
 
@@ -28,7 +28,7 @@ class Genre(TimeStampedMixin):
 
 
 class FilmWorkGenre(models.Model):
-    id = models.UUIDField(primary_key=True, unique=True, default=uuid.uuid4)
+    id = models.UUIDField(primary_key=True, unique=True, default=uuid.uuid4, editable=False)
     film_work = models.ForeignKey("FilmWork", on_delete=models.CASCADE)
     genre = models.ForeignKey("Genre", on_delete=models.CASCADE)
     created_at = models.DateTimeField(auto_now_add=True)
@@ -45,7 +45,7 @@ class FilmWorkGenre(models.Model):
 
 
 class Person(TimeStampedMixin):
-    id = models.UUIDField(primary_key=True, unique=True, default=uuid.uuid4)
+    id = models.UUIDField(primary_key=True, unique=True, default=uuid.uuid4, editable=False)
     full_name = models.CharField(_("full name"), max_length=255)
     birth_date = models.DateField(_("birth date"), blank=True, null=True)
 
@@ -59,7 +59,7 @@ class Person(TimeStampedMixin):
 
 
 class FilmWorkPerson(models.Model):
-    id = models.UUIDField(primary_key=True, unique=True, default=uuid.uuid4)
+    id = models.UUIDField(primary_key=True, unique=True, default=uuid.uuid4, editable=False)
     film_work = models.ForeignKey("FilmWork", on_delete=models.CASCADE)
     person = models.ForeignKey("Person", on_delete=models.CASCADE)
     role = models.CharField(_("role"), max_length=255)
@@ -82,7 +82,7 @@ class FilmWorkType(models.TextChoices):
 
 
 class FilmWork(TimeStampedMixin):
-    id = models.UUIDField(primary_key=True, unique=True, default=uuid.uuid4)
+    id = models.UUIDField(primary_key=True, unique=True, default=uuid.uuid4, editable=False)
     title = models.CharField(_("title"), max_length=255)
     description = models.TextField(_("description"), blank=True, null=True)
     creation_date = models.DateField(_("creation date"), blank=True, null=True)

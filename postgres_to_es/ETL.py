@@ -15,7 +15,7 @@ state = State(STORAGE)
 def produce(consumer, table: str):
     """
     Функция собирает id измененных сущностей в таблице БД, затем передает в enricher
-    для дальнейшего поиска id связанных финопроизведений, либо ищет id изменившихся
+    для дальнейшего поиска id связанных кинопроизведений, либо ищет id изменившихся
     кинопроизведений и передает в merger для сбора дополнительной информации по ним
     :param consumer: enricher или loader
     :param table: таблица в БД в которой ведется поиск
@@ -40,21 +40,22 @@ def produce(consumer, table: str):
         new_last_crawl_time = data_chunk[-1][-1]
         state.set_state(f"last_{table}_crawl_time",
                         datetime.strftime(new_last_crawl_time, '%Y-%m-%dT%H:%M:%S.%f'))
-        consumer.send(([item[0] for item in data_chunk], table))
+        consumer.send([item[0] for item in data_chunk])
         offset += len(data_chunk)
 
 
 @coroutine
-def enrich(merger):
+def enrich(merger, table):
     """
-    Корутина принимает список id измененных объектов и таблицу, из которой они взяты
+    Корутина принимает список id измененных объектов, из которой они взяты
     и собирает id кинопроизведений, которых коснулись эти изменения.
     Id Кинопроизведений пачками передаются в merger
     для сбора всей информации по кинопроизведениям
     :param: merger: Корутина для сбора всех данных о кинопроизведении по id
+    :param table: таблица в БД из которой взяты измененные id
     """
     while True:
-        ids, table = (yield)
+        ids: list = (yield)
         pg = PostgresConnector()
         prepared_ids = ','.join(f"'{item}'" for item in ids)
         offset = 0
@@ -140,14 +141,15 @@ def start():
     tables = ['film_work', 'genre', 'person']
     loader = load()
     merger = merge(loader)
-    enricher = enrich(merger)
 
     while True:
         for table in tables:
             if table == 'film_work':
                 produce(merger, table)
             else:
+                enricher = enrich(merger, table)
                 produce(enricher, table)
+
             sleep(FETCH_DELAY)
 
 
