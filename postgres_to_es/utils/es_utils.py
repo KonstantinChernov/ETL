@@ -135,16 +135,12 @@ class ElasticSearchConnector:
 
     @backoff()
     def create_index(self):
-        """
-        Функция создает индекс для кинопроизведений в elasticSearch
-        """
+        """Функция создает индекс для кинопроизведений в elasticSearch."""
         self.es.indices.create(index=INDEX_NAME, settings=INDEX_SETTINGS, mappings=INDEX_MAPPINGS, ignore=400)
 
     @backoff()
     def bulk_update(self, docs: List[FilmWork]):
-        """
-        Функция загружает пачками кинопроизведения в индекс elasticSearch
-        """
+        """Функция загружает пачками кинопроизведения в индекс elasticSearch."""
         index_exists = self.es.indices.exists(index=INDEX_NAME)
         if not index_exists:
             self.create_index()

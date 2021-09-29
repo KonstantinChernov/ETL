@@ -16,7 +16,8 @@ def produce(consumer, table: str):
     """
     Функция собирает id измененных сущностей в таблице БД, затем передает в enricher
     для дальнейшего поиска id связанных кинопроизведений, либо ищет id изменившихся
-    кинопроизведений и передает в merger для сбора дополнительной информации по ним
+    кинопроизведений и передает в merger для сбора дополнительной информации по ним.
+
     :param consumer: enricher или loader
     :param table: таблица в БД в которой ведется поиск
     """
@@ -32,8 +33,8 @@ def produce(consumer, table: str):
     while True:
         data_chunk = pg.query(f"SELECT id, updated_at "
                               f"FROM content.{table} "
-                              f"WHERE updated_at > '{last_crawl_time}' "
-                              f"ORDER BY updated_at OFFSET {offset} LIMIT {LIMIT}; ")
+                              f"WHERE updated_at > %s "
+                              f"ORDER BY updated_at OFFSET %s LIMIT %s; ", (last_crawl_time, offset, LIMIT))
         if not data_chunk:
             break
         logging.info(f"got changed data in '{table}' table")
@@ -45,27 +46,26 @@ def produce(consumer, table: str):
 
 
 @coroutine
-def enrich(merger, table):
+def enrich(merger, table: str):
     """
-    Корутина принимает список id измененных объектов, из которой они взяты
-    и собирает id кинопроизведений, которых коснулись эти изменения.
-    Id Кинопроизведений пачками передаются в merger
-    для сбора всей информации по кинопроизведениям
-    :param: merger: Корутина для сбора всех данных о кинопроизведении по id
+    Корутина принимает список id измененных объектов и собирает id кинопроизведений,
+    которых коснулись эти изменения. Id Кинопроизведений пачками передаются в merger
+    для сбора всей информации по кинопроизведениям.
+
+    :param merger: Корутина для сбора всех данных о кинопроизведении по id
     :param table: таблица в БД из которой взяты измененные id
     """
     while True:
         ids: list = (yield)
         pg = PostgresConnector()
-        prepared_ids = ','.join(f"'{item}'" for item in ids)
         offset = 0
         while True:
             data_chunk = pg.query(f"SELECT DISTINCT fw.id, updated_at "
                                   f"FROM content.film_work fw "
                                   f"LEFT JOIN content.{table}_film_work rel "
                                   f"ON rel.film_work_id = fw.id "
-                                  f"WHERE rel.{table}_id IN ({prepared_ids}) "
-                                  f"ORDER BY updated_at OFFSET {offset} LIMIT {LIMIT}; ")
+                                  f"WHERE rel.{table}_id IN %s "
+                                  f"ORDER BY updated_at OFFSET %s LIMIT %s; ", (tuple(ids), offset, LIMIT))
             if not data_chunk:
                 break
             logging.info(f"enrich data from producer")
@@ -77,13 +77,13 @@ def enrich(merger, table):
 def merge(loader):
     """
     Корутина принимает список id кинопроизведений и собирает данные по каждому произведению из БД
-    Трансформирует их в удобный формат и передает в loader для загрузки в elasticSearch
-    :param: loader: Корутина для загрузки данных в elasticSearch
+    Трансформирует их в удобный формат и передает в loader для загрузки в elasticSearch.
+
+    :param loader: Корутина для загрузки данных в elasticSearch
     """
     while True:
         pg = PostgresConnector()
         film_ids: list = (yield)
-        prepared_ids = ','.join(f"'{item}'" for item in film_ids)
         films_from_pg = pg.query(f'''
             SELECT
                 fw.id, 
@@ -95,17 +95,20 @@ def merge(loader):
                 ARRAY_AGG(DISTINCT p.full_name) FILTER (WHERE pfw.role = 'director') AS directors_names,
                 ARRAY_AGG(DISTINCT p.full_name) FILTER (WHERE pfw.role = 'actor') AS actors_names,
                 ARRAY_AGG(DISTINCT p.full_name) FILTER (WHERE pfw.role = 'writer') AS writers_names, 
-                JSON_AGG(DISTINCT jsonb_build_object('id', p.id, 'name', p.full_name)) FILTER (WHERE pfw.role = 'director') AS directors,
-                JSON_AGG(DISTINCT jsonb_build_object('id', p.id, 'name', p.full_name)) FILTER (WHERE pfw.role = 'actor') AS actors,
-                JSON_AGG(DISTINCT jsonb_build_object('id', p.id, 'name', p.full_name)) FILTER (WHERE pfw.role = 'writer') AS writers
+                JSON_AGG(DISTINCT jsonb_build_object('id', p.id, 'name', p.full_name)) 
+                FILTER (WHERE pfw.role = 'director') AS directors,
+                JSON_AGG(DISTINCT jsonb_build_object('id', p.id, 'name', p.full_name)) 
+                FILTER (WHERE pfw.role = 'actor') AS actors,
+                JSON_AGG(DISTINCT jsonb_build_object('id', p.id, 'name', p.full_name)) 
+                FILTER (WHERE pfw.role = 'writer') AS writers
             FROM content.film_work fw
             LEFT OUTER JOIN content.person_film_work pfw ON pfw.film_work_id = fw.id
             LEFT OUTER JOIN content.person p ON p.id = pfw.person_id
             LEFT OUTER JOIN content.genre_film_work gfw ON gfw.film_work_id = fw.id
             LEFT OUTER JOIN content.genre g ON g.id = gfw.genre_id
-            WHERE fw.id IN ({prepared_ids})
+            WHERE fw.id IN %s
             GROUP BY fw.id, fw.title, fw.description, fw.rating;
-            ''')
+            ''', (tuple(film_ids), ))
         films_to_update_in_es = [FilmWork(
             id=film[0],
             rating=film[1],
@@ -127,9 +130,7 @@ def merge(loader):
 
 @coroutine
 def load():
-    """
-    Корутина принимает порции данных с фкинопроизведениями и сохраняет в elasticSearch
-    """
+    """Корутина принимает порции данных с кинопроизведениями и сохраняет в elasticSearch."""
     while True:
         films: list = (yield)
         es = ElasticSearchConnector()

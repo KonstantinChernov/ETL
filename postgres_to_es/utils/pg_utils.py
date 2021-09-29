@@ -16,11 +16,9 @@ class PostgresConnector:
         return psycopg2.connect(**POSTGRES_DSL, cursor_factory=DictCursor)
 
     @backoff()
-    def query(self, sql: str) -> list:
-        """
-        Функция для декорированного запроса к БД
-        """
+    def query(self, sql: str, args: tuple) -> list:
+        """Функция для декорированного запроса к БД."""
         with self.connection as connection, connection.cursor() as cur:
-            cur.execute(sql)
+            cur.execute(sql, args)
             rows = cur.fetchall()
         return rows

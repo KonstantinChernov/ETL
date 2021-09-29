@@ -40,6 +40,8 @@ services:
     command: python3 /code/ETL.py
     volumes:
       - ./postgres_to_es:/code
+    env_file:
+      - ./.env
     depends_on:
       - movies-db
       - elasticsearch
