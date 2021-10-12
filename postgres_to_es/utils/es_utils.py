@@ -7,8 +7,9 @@ from utils.decorators import backoff
 
 from config import ELASTICSEARCH_HOST, ELASTICSEARCH_PORT
 from utils.dataclasses_etl import FilmWork
-
-INDEX_NAME = "film_work"
+from utils.film_es_index import INDEX_FILM_MAPPINGS, INDEX_FILM_NAME
+from utils.genre_es_index import INDEX_GENRE_NAME, INDEX_GENRE_MAPPINGS
+from utils.person_es_index import INDEX_PERSON_NAME, INDEX_PERSON_MAPPINGS
 
 INDEX_SETTINGS = {
     "index": {
@@ -41,91 +42,15 @@ INDEX_SETTINGS = {
         }
     }
 }
-INDEX_MAPPINGS = {
-    "dynamic": "strict",
-    "properties": {
-        "id": {
-            "type": "keyword"
-        },
-        "rating": {
-            "type": "float"
-        },
-        "type": {
-            "type": "keyword"
-        },
-        "title": {
-            "type": "text",
-            "analyzer": "ru_en",
-            "fields": {
-                "raw": {
-                    "type": "keyword"
-                }
-            }
-        },
-        "description": {
-            "type": "text",
-            "analyzer": "ru_en"
-        },
-        "genres": {
-            "type": "text",
-            "analyzer": "ru_en"
-        },
-        "directors_names": {
-            "type": "text",
-            "analyzer": "ru_en"
-        },
-        "actors_names": {
-            "type": "text",
-            "analyzer": "ru_en"
-        },
-        "writers_names": {
-            "type": "text",
-            "analyzer": "ru_en"
-        },
-        "directors": {
-            "type": "nested",
-            "dynamic": "strict",
-            "properties": {
-                "id": {
-                    "type": "keyword"
-                },
-                "name": {
-                    "type": "text",
-                    "analyzer": "ru_en"
-                }
-            }
-        },
-        "actors": {
-            "type": "nested",
-            "dynamic": "strict",
-            "properties": {
-                "id": {
-                    "type": "keyword"
-                },
-                "name": {
-                    "type": "text",
-                    "analyzer": "ru_en"
-                }
-            }
-        },
-        "writers": {
-            "type": "nested",
-            "dynamic": "strict",
-            "properties": {
-                "id": {
-                    "type": "keyword"
-                },
-                "name": {
-                    "type": "text",
-                    "analyzer": "ru_en"
-                }
-            }
-        }
-    }
-}
 
 
 class ElasticSearchConnector:
+    index_map = {
+        "film_work": (INDEX_FILM_NAME, INDEX_FILM_MAPPINGS),
+        "genre": (INDEX_GENRE_NAME, INDEX_GENRE_MAPPINGS),
+        "person": (INDEX_PERSON_NAME, INDEX_PERSON_MAPPINGS),
+    }
+
     def __init__(self):
         self.es = self.connect()
 
@@ -134,20 +59,23 @@ class ElasticSearchConnector:
         return Elasticsearch(host=ELASTICSEARCH_HOST, port=ELASTICSEARCH_PORT)
 
     @backoff()
-    def create_index(self):
+    def create_index(self, index: str):
         """Функция создает индекс для кинопроизведений в elasticSearch."""
-        self.es.indices.create(index=INDEX_NAME, settings=INDEX_SETTINGS, mappings=INDEX_MAPPINGS, ignore=400)
+        self.es.indices.create(index=self.index_map[index][0],
+                               mappings=self.index_map[index][1],
+                               settings=INDEX_SETTINGS,
+                               ignore=400)
 
     @backoff()
-    def bulk_update(self, docs: List[FilmWork]):
+    def bulk_update(self, docs: List[FilmWork], table: str):
         """Функция загружает пачками кинопроизведения в индекс elasticSearch."""
-        index_exists = self.es.indices.exists(index=INDEX_NAME)
+        index_exists = self.es.indices.exists(index=self.index_map[table][0])
         if not index_exists:
-            self.create_index()
+            self.create_index(table)
         if docs:
             body = []
             for doc in docs:
-                body.append({'index': {'_index': INDEX_NAME,
+                body.append({'index': {'_index': self.index_map[table][0],
                                        '_id': doc.id}})
                 body.append(asdict(doc))
             self.es.bulk(body=body)

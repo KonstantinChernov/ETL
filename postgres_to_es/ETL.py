@@ -3,7 +3,7 @@ from datetime import datetime
 from time import sleep
 
 from config import STORAGE, LIMIT, FETCH_DELAY
-from utils.dataclasses_etl import FilmWork, Person
+from utils.dataclasses_etl import FilmWork, FilmWorkPerson, FilmWorkGenre, Genre, Person
 from utils.decorators import coroutine
 from utils.es_utils import ElasticSearchConnector
 from utils.pg_utils import PostgresConnector
@@ -12,7 +12,7 @@ from state import State
 state = State(STORAGE)
 
 
-def produce(consumer, table: str):
+def produce(table: str):
     """
     Функция собирает id измененных сущностей в таблице БД, затем передает в enricher
     для дальнейшего поиска id связанных кинопроизведений, либо ищет id изменившихся
@@ -41,7 +41,26 @@ def produce(consumer, table: str):
         new_last_crawl_time = data_chunk[-1][-1]
         state.set_state(f"last_{table}_crawl_time",
                         datetime.strftime(new_last_crawl_time, '%Y-%m-%dT%H:%M:%S.%f'))
-        consumer.send([item[0] for item in data_chunk])
+
+        film_loader = load('film_work')
+        film_merger = merge_film(film_loader)
+
+        if table == 'film_work':
+            film_merger.send([item[0] for item in data_chunk])
+        else:
+
+            enricher = enrich(film_merger, table)
+            enricher.send([item[0] for item in data_chunk])
+
+            loader = load(table)
+            if table == 'genre':
+                merger = merge_genre(loader)
+            elif table == 'person':
+                merger = merge_person(loader)
+            else:
+                logging.error(f"No '{table}' table")
+                return
+            merger.send([item[0] for item in data_chunk])
         offset += len(data_chunk)
 
 
@@ -74,7 +93,7 @@ def enrich(merger, table: str):
 
 
 @coroutine
-def merge(loader):
+def merge_film(loader):
     """
     Корутина принимает список id кинопроизведений и собирает данные по каждому произведению из БД
     Трансформирует их в удобный формат и передает в loader для загрузки в elasticSearch.
@@ -91,10 +110,11 @@ def merge(loader):
                 fw.type, 
                 fw.title, 
                 fw.description, 
-                ARRAY_AGG(DISTINCT g.name) AS genres,
+                ARRAY_AGG(DISTINCT g.name) AS genres_names,
                 ARRAY_AGG(DISTINCT p.full_name) FILTER (WHERE pfw.role = 'director') AS directors_names,
                 ARRAY_AGG(DISTINCT p.full_name) FILTER (WHERE pfw.role = 'actor') AS actors_names,
                 ARRAY_AGG(DISTINCT p.full_name) FILTER (WHERE pfw.role = 'writer') AS writers_names, 
+                JSON_AGG(DISTINCT jsonb_build_object('id', g.id, 'name', g.name)) AS genres,
                 JSON_AGG(DISTINCT jsonb_build_object('id', p.id, 'name', p.full_name)) 
                 FILTER (WHERE pfw.role = 'director') AS directors,
                 JSON_AGG(DISTINCT jsonb_build_object('id', p.id, 'name', p.full_name)) 
@@ -108,20 +128,21 @@ def merge(loader):
             LEFT OUTER JOIN content.genre g ON g.id = gfw.genre_id
             WHERE fw.id IN %s
             GROUP BY fw.id, fw.title, fw.description, fw.rating;
-            ''', (tuple(film_ids), ))
+            ''', (tuple(film_ids),))
         films_to_update_in_es = [FilmWork(
             id=film[0],
             rating=film[1],
             type=film[2],
             title=film[3],
             description=film[4],
-            genres=film[5],
+            genres_names=film[5],
             directors_names=film[6],
             actors_names=film[7],
             writers_names=film[8],
-            directors=[Person(**person) for person in film[9]] if film[9] else [],
-            actors=[Person(**person) for person in film[10]] if film[10] else [],
-            writers=[Person(**person) for person in film[11]] if film[11] else [])
+            genres=[FilmWorkGenre(**person) for person in film[9]] if film[9] else [],
+            directors=[FilmWorkPerson(**person) for person in film[10]] if film[10] else [],
+            actors=[FilmWorkPerson(**person) for person in film[11]] if film[11] else [],
+            writers=[FilmWorkPerson(**person) for person in film[12]] if film[12] else [])
             for film in films_from_pg]
 
         loader.send(films_to_update_in_es)
@@ -129,28 +150,81 @@ def merge(loader):
 
 
 @coroutine
-def load():
+def merge_genre(loader):
+    """
+    Корутина принимает список id жанров, собирает данные по каждому жанру из БД
+    Трансформирует их в удобный формат и передает в loader для загрузки в elasticSearch.
+
+    :param loader: Корутина для загрузки данных в elasticSearch
+    """
+    while True:
+        pg = PostgresConnector()
+        genres_ids: list = (yield)
+        genres_from_pg = pg.query(f'''
+            SELECT DISTINCT id, name, description
+            FROM content.genre g
+            WHERE g.id IN %s
+            ''', (tuple(genres_ids),))
+        genres_to_update_in_es = [Genre(
+            id=genre[0],
+            name=genre[1],
+            description=genre[2])
+            for genre in genres_from_pg]
+
+        loader.send(genres_to_update_in_es)
+        logging.info(f"merge data")
+
+
+@coroutine
+def merge_person(loader):
+    """
+    Корутина принимает список id персоналий, собирает данные по каждой персоналии из БД
+    Трансформирует их в удобный формат и передает в loader для загрузки в elasticSearch.
+
+    :param loader: Корутина для загрузки данных в elasticSearch
+    """
+    while True:
+        pg = PostgresConnector()
+        person_ids: list = (yield)
+        person_from_pg = pg.query(f'''
+            SELECT DISTINCT
+            p.id, 
+            p.full_name, 
+            ARRAY_AGG(DISTINCT pfw.role) AS roles,
+            p.birth_date, 
+            ARRAY_AGG(DISTINCT pfw.film_work_id::text) AS film_ids
+            FROM content.person p
+            LEFT OUTER JOIN content.person_film_work pfw ON p.id = pfw.person_id
+            WHERE p.id IN %s
+            GROUP BY p.id;
+            ''', (tuple(person_ids),))
+        person_to_update_in_es = [Person(
+            id=person[0],
+            full_name=person[1],
+            roles=person[2],
+            birth_date=person[3],
+            film_ids=person[4])
+            for person in person_from_pg]
+
+        loader.send(person_to_update_in_es)
+        logging.info(f"merge data")
+
+
+@coroutine
+def load(table: str):
     """Корутина принимает порции данных с кинопроизведениями и сохраняет в elasticSearch."""
     while True:
-        films: list = (yield)
+        objects: list = (yield)
         es = ElasticSearchConnector()
-        es.bulk_update(films)
+        es.bulk_update(objects, table)
         logging.info(f"load data to elasticSearch")
 
 
 def start():
     tables = ['film_work', 'genre', 'person']
-    loader = load()
-    merger = merge(loader)
-
     while True:
         for table in tables:
-            if table == 'film_work':
-                produce(merger, table)
-            else:
-                enricher = enrich(merger, table)
-                produce(enricher, table)
-
+            produce(table)
             sleep(FETCH_DELAY)
 
 
